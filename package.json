@@ -1,0 +1,24 @@
+{
+  "name": "wasm3_arduino",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node tests",
+    "build": "npm run asbuild:optimized && xxd -i build/optimized.wasm > main/esp32/optimized.wasm.h",
+    "create-wasm-header": "xxd -i build/optimized.wasm > main/esp32/app.wasm.h",
+    "asbuild:untouched": "asc assembly/index.ts --target debug",
+    "asbuild:optimized": "asc assembly/index.ts --target release",
+    "asbuild": "npm run asbuild:untouched && npm run asbuild:optimized",
+    "build-memorybase": "asc assembly/index.ts -b build/optimized.wasm -t build/optimized.wat --memoryBase 1024 --sourceMap --optimize"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@assemblyscript/loader": "^0.18.0",
+    "assemblyscript-json": "^1.0.0"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.18.0"
+  }
+}
