@@ -1,15 +1,68 @@
 import * as arduino from "./arduino";
-
+//import {calcDistance, getDistance, isCollisionDetected} from "./collision-detection"
+// By growing our Wasm Memory by 1 page (64KB)
+memory.grow(1);
 
 let axisNumber:i32 = 0;
 let axisValue:f32 = 0;
+let axesArray:Array<f32> = [0,0,0,0,0,0,0];
+let distance:f32 = 0
+const SAFETY_DISTANCE :f64 = 1500
 
+const AXES_ARRAY_OFFSET = 0; //from 0 to 55 for an array with length 7 (Axis1-7)
+const A2_IN_A1_COORD_OFFSET = 56; //56-67, i32
+const A3_IN_A2_COORD_OFFSET = 68; //68- 79
+const A4_IN_A3_COORD_OFFSET = 80; //80-91
+const TIP_ARRAY_OFFSET = 92;//92-123
+const DUMMY_OBJECT_COORD_OFFSET = 124;//124-147
+const DISTANCE_RESULT_OFFSET = 148//148-155
+const HT_MATRIX_OFFSET01 = 200;//200-327
+const HT_MATRIX_OFFSET12 = 350;//350-477
+const HT_MATRIX_OFFSET23 = 500;//500-627
+const HT_MATRIX_OFFSET34 = 650;//650-777
+const HT_MATRIX_OFFSET45 = 800;//800-927
+const TIP_COORD_OFFSET = 950;//950-981 Array<f64>
+const MATRIX_RESULT_OFFSET0112 = 1000;//1000-1127
+const MATRIX_RESULT_OFFSET1223 = 1150;//1150-1277
+const MATRIX_RESULT_OFFSET2334 = 1300;//1300-1427
+const MATRIX_RESULT_OFFSET3445 = 1450;//1450-1577
 
-export function add(a: i32, b: i32): void {
-  let result = a+b;
-  store<i32>(0,result)
+/*
+let posA2fromA1 = [350, 750, 0] //coordinate of A2 in A1 coordinate system (mm)
+let posA3fromA2 = [1250, 0, 0]
+let posA4fromA3 = [1100, 0, 0]
+let tipFromA5 = [230,0,0,1] //coordinate of tip in the A5-axis coordinate system. With an accessory, one needs tipFrom6 in the A6-axis coordinate system instead of.
+let objectCoordinate = [1680, 2000, 1499]*/
+
+export function initAxesCoordinates():void{
+  let sizeOfValue = 4;//i32
+  let sizeOfValuef64 = 8;//f64
+  store<i32>(A2_IN_A1_COORD_OFFSET,350) //A2's coordinate in A1 coordinate system: (350, 750, 0)
+  store<i32>(A2_IN_A1_COORD_OFFSET+sizeOfValue,750)
+  store<i32>(A2_IN_A1_COORD_OFFSET+sizeOfValue*2,0)
+  store<i32>(A3_IN_A2_COORD_OFFSET,1250) //A3 coordinate in A2 coordinate system: (1250, 0, 0)
+  store<i32>(A3_IN_A2_COORD_OFFSET+sizeOfValue,0)
+  store<i32>(A3_IN_A2_COORD_OFFSET+sizeOfValue*2,0)
+  store<i32>(A4_IN_A3_COORD_OFFSET,1100) //A4 coordinate in A3 coordinate system: (1100, 0, 0)
+  store<i32>(A4_IN_A3_COORD_OFFSET+sizeOfValue,0)
+  store<i32>(A4_IN_A3_COORD_OFFSET+sizeOfValue*2,0)
+  store<f64>(TIP_ARRAY_OFFSET,230) //Tip coordinate in A5 coordinate system: (230, 0, 0) without accessories, p_A5 = (230,0,0,1) in Homogeneous Transformation
+  store<f64>(TIP_ARRAY_OFFSET+sizeOfValuef64,0)
+  store<f64>(TIP_ARRAY_OFFSET+sizeOfValuef64*2,0)
+  store<f64>(TIP_ARRAY_OFFSET+sizeOfValuef64*3,1)
+  store<f64>(DUMMY_OBJECT_COORD_OFFSET,1680) //Dummy object point (1680, 2000, 1499)
+  store<f64>(DUMMY_OBJECT_COORD_OFFSET+sizeOfValuef64,2000)
+  store<f64>(DUMMY_OBJECT_COORD_OFFSET+sizeOfValuef64*2,1499)
 }
 
+
+//TODO:Check the sign of minus (or plus) values. According to a previous thesis, 32 means positive.
+function isPositive(sign:i32):bool{
+  if(sign==32){
+    return true
+  }
+  return false
+}
 
 export function convertNumber(dataArray:Uint8Array):i32{
   let convertedValue:i32=0
@@ -33,6 +86,7 @@ export function dataProcessWasm(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,
 
   axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
   axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4)/100000.0)
+  //axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
 
   if(axisNumber<0 || axisNumber>7){
     axisNumber = -1
@@ -41,3 +95,197 @@ export function dataProcessWasm(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,
   arduino.setAxis(axisNumber,axisValue)
 
 }
+
+//TODO:f64だと確かArduinoに値がうまく渡せないはず。要チェック.arduinoに結果渡すの面倒なので関数使って渡す。（返値一つならなんとかなるかもしれない）
+
+function storeAxisValue(number:i32,value:f32): void{
+  axesArray[number] = value
+}
+
+export function setAxisData(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,sign:u8, axisval1:u8,axisval2:u8,axisval3:u8,axisval4:u8):i32{
+  axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
+  axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
+
+  if(isPositive(sign)&&axisValue !=0){
+    axisValue = -axisValue
+  }
+
+  let sizeOfValue = 8;//f64
+  if(axisNumber == 7){
+    //TODO: とにかく変数を参照して代入するとクラッシュするからどうしたらいいかわからん
+    store<f64>(AXES_ARRAY_OFFSET+(axisNumber-1)*sizeOfValue,axisValue)//Bei der direkten Einsetzung gibt arduino einen Error "InstrFetchProhibited" und "missing imported function" aus.
+    calcDistance();
+  }
+  else{
+    store<f64>(AXES_ARRAY_OFFSET+(axisNumber-1)*sizeOfValue,axisValue)
+  }
+  return axisNumber
+}
+
+/*
+export function getMinDistance():f32{
+  return getDistance()
+}
+
+
+export function isUnsafe():bool{
+  return isCollisionDetected()
+}*/
+
+
+//Homogeneous Transformation Matrix for Axis 1-5
+//TODO: 二次元配列が使えない。。。どうする？？<Array<Array>>, f64[][], Array<f64[]>はだめだった。案１:全部１次元配列でこなす。案２:行列をArduino側で作ってポインタをもらう。案３:Arduinoであらかじめ定義したものをもらう。ちなみに案２はクラッシュの可能性から却下
+
+
+//TODO: Consider the movement on the rail (the matrix T01)
+//TODO: Put some points on each parts of arm
+//TODO: Value of Axis 6 is needed, if a parts is attached on the tip.
+//Create a Homogeneous Transformation Matrix
+//Calling with variable number of args better...
+function storef64ArrayRaw4x4(offset:i32,value1:f64,value2:f64,value3:f64,value4:f64):void{
+  store<f64>(offset,value1)
+  store<f64>(offset+8,value2)
+  store<f64>(offset+16,value3)
+  store<f64>(offset+24,value4)
+}
+
+function setHTMatrix(axisNumber:i32, axisValue:f64):void{
+  let arraySize = 4;
+  let radian:f64 = axisValue*Math.PI/180
+  let typeSize = 8; //size of f64
+  let rawOffset2 = typeSize*arraySize //offset with f64 array of length 4
+  let rawOffset3 = 2*typeSize*arraySize
+  let rawOffset4 = 3*typeSize*arraySize
+  if(axisNumber==1){
+    //rotation in the y-dimension
+    //Here assumes that there is no translation on the rail
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET01,Math.cos(radian), 0, Math.sin(radian), 0)
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET01+rawOffset2,0, 1, 0, 0)
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET01+rawOffset3,-Math.sin(radian), 0, Math.cos(radian), 0)
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET01+rawOffset4,0, 0, 0, 1)
+  }
+  else if(axisNumber == 4){
+    //rotation in the x-dimension
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET34,1, 0, 0, load<i32>(A4_IN_A3_COORD_OFFSET))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET34+rawOffset2,0,Math.cos(radian), -Math.sin(radian), load<i32>(A4_IN_A3_COORD_OFFSET+4))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET34+rawOffset3,0,Math.sin(radian), Math.cos(radian), load<i32>(A4_IN_A3_COORD_OFFSET+8))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET34+rawOffset4,0, 0, 0, 1)
+  }
+  else if (axisNumber == 2){
+    //rotation in the z-dimension
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET12,Math.cos(radian), -Math.sin(radian), 0, load<i32>(A2_IN_A1_COORD_OFFSET))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET12+rawOffset2,Math.sin(radian), Math.cos(radian), 0, load<i32>(A2_IN_A1_COORD_OFFSET+4))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET12+rawOffset3,0, 0, 1, load<i32>(A2_IN_A1_COORD_OFFSET+8))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET12+rawOffset4,0, 0, 0, 1)
+    }
+  else if(axisNumber == 3){
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET23,Math.cos(radian), -Math.sin(radian), 0, load<i32>(A3_IN_A2_COORD_OFFSET))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET23+rawOffset2,Math.sin(radian), Math.cos(radian), 0, load<i32>(A3_IN_A2_COORD_OFFSET+4))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET23+rawOffset3,0, 0, 1, load<i32>(A3_IN_A2_COORD_OFFSET+8))
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET23+rawOffset4,0, 0, 0, 1)
+  }
+  else if(axisNumber == 5) {
+    //It assumes that A4 and A5 are on the same coordinate.
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET45,Math.cos(radian), -Math.sin(radian), 0, 0)
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET45+rawOffset2,Math.sin(radian), Math.cos(radian), 0, 0)
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET45+rawOffset3,0, 0, 1, 0)
+    storef64ArrayRaw4x4(HT_MATRIX_OFFSET45+rawOffset4,0, 0, 0, 1)
+  }
+
+}
+
+function matrixMultiplication(matrixOffset1:i32,matrixOffset2:i32,resultOffset:i32):void{
+  const sizeOfVariable = 8;//f64
+  let counter = 0
+  let result:f64 = 0
+//TODO: implement matrix multiplication with offset
+  for(let i=0; i<4; i++){
+    for(let j=0; j<4; j++){
+      for(let k=0; k<4; k++){
+        //result[i][j] += matrix1[i][k]*matrix2[k][j]
+        result += load<f64>(matrixOffset1 + i*4*sizeOfVariable + k*sizeOfVariable) * load<f64>(matrixOffset2 + k*4*sizeOfVariable + j*sizeOfVariable)
+      }
+      store<f64>(resultOffset+sizeOfVariable*counter,result)
+      /*arduino.showArrayRaw(<f32>load<f64>(resultOffset),<f32>load<f64>(resultOffset+8),<f32>load<f64>(resultOffset+2*8),<f32>load<f64>(resultOffset+3*8))
+      arduino.showArrayRaw(<f32>load<f64>(resultOffset+4*8),<f32>load<f64>(resultOffset+5*8),<f32>load<f64>(resultOffset+6*8),<f32>load<f64>(resultOffset+7*8))
+      arduino.showArrayRaw(<f32>load<f64>(resultOffset+8*8),<f32>load<f64>(resultOffset+9*8),<f32>load<f64>(resultOffset+10*8),<f32>load<f64>(resultOffset+11*8))
+      arduino.showArrayRaw(<f32>load<f64>(resultOffset+12*8),<f32>load<f64>(resultOffset+13*8),<f32>load<f64>(resultOffset+14*8),<f32>load<f64>(resultOffset+15*8))*/
+      result = 0
+      counter++
+    }
+  }
+}
+
+function calcTipCoordinate():void{
+  let result:f64 = 0
+  let sizeOfVariable = 8;//f64
+  //Calculate T01*T12*T23*T34*T45*tipFromA5
+  //arduino.setAxis(100,<f32>load<f64>(HT_MATRIX_OFFSET12+8*7))
+  //TODO: ここでエラーでるので確認. たぶんオーバーフロー起きてる。$HOME/Library/Arduino15にPreferencesからアクセスして、/Library/Arduino15/packages/esp32/hardware/esp32/1.0.4/cores/esp32のmain.cppのxTaskCreateUniversalのスタックサイズを変更
+  matrixMultiplication(HT_MATRIX_OFFSET01,HT_MATRIX_OFFSET12,MATRIX_RESULT_OFFSET0112)
+  //arduino.setAxis(100,<f32>load<f64>(MATRIX_RESULT_OFFSET+8*3))
+  /*arduino.showArrayRaw(<f32>load<f64>(MATRIX_RESULT_OFFSET),<f32>load<f64>(MATRIX_RESULT_OFFSET+8),<f32>load<f64>(MATRIX_RESULT_OFFSET+2*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+3*8))
+  arduino.showArrayRaw(<f32>load<f64>(MATRIX_RESULT_OFFSET+4*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+5*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+6*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+7*8))
+  arduino.showArrayRaw(<f32>load<f64>(MATRIX_RESULT_OFFSET+8*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+9*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+10*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+11*8))
+  arduino.showArrayRaw(<f32>load<f64>(MATRIX_RESULT_OFFSET+12*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+13*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+14*8),<f32>load<f64>(MATRIX_RESULT_OFFSET+15*8))*/
+  matrixMultiplication(MATRIX_RESULT_OFFSET0112,HT_MATRIX_OFFSET23,MATRIX_RESULT_OFFSET1223)
+  matrixMultiplication(MATRIX_RESULT_OFFSET1223,HT_MATRIX_OFFSET34,MATRIX_RESULT_OFFSET2334)
+  matrixMultiplication(MATRIX_RESULT_OFFSET2334,HT_MATRIX_OFFSET45,MATRIX_RESULT_OFFSET3445)
+  //arduino.setAxis(100,<f32>load<f64>(MATRIX_RESULT_OFFSET+3*8))
+
+  for(let i=0; i<4; i++){
+    for(let j=0; j<4; j++){
+        //coordinate[i] += storeMatrix[i][j]*tipFromA5[j]
+        result += load<f64>(MATRIX_RESULT_OFFSET3445 + i*4*sizeOfVariable + j*sizeOfVariable) * load<f64>(TIP_ARRAY_OFFSET+j*sizeOfVariable)
+    }
+    store<f64>(TIP_COORD_OFFSET+i*sizeOfVariable,result)
+    //arduino.showArrayRaw(<f32>load<f64>(TIP_COORD_OFFSET),<f32>load<f64>(TIP_COORD_OFFSET+8),<f32>load<f64>(TIP_COORD_OFFSET+2*8),<f32>load<f64>(TIP_COORD_OFFSET+3*8))
+    result = 0
+  }
+}
+
+
+//This function called if 1-7 axis data are ready
+export function calcDistance():void {
+  let radValue:f64 = 0;
+  let sizeOfVariable = 8;//f64
+  for (let i = 0; i < 7; i++) {
+    radValue = load<f64>(AXES_ARRAY_OFFSET+i*sizeOfVariable)
+    //setHTMatrix(i+1, load<f64>(AXES_ARRAY_OFFSET+i*sizeOfVariable)*3.14159/180)//radian
+    setHTMatrix(i+1, radValue)
+  }
+
+    calcTipCoordinate()
+    //arduino.setAxis(100,<f32>load<f64>(TIP_COORD_OFFSET))
+
+    arduino.showArrayRaw(<f32>load<f64>(TIP_COORD_OFFSET),<f32>load<f64>(TIP_COORD_OFFSET+8),<f32>load<f64>(TIP_COORD_OFFSET+2*8),<f32>load<f64>(TIP_COORD_OFFSET+3*8))
+    let coordinateX:f64 = load<f64>(TIP_COORD_OFFSET)
+    let coordinateY:f64 = load<f64>(TIP_COORD_OFFSET+sizeOfVariable)
+    let coordinateZ:f64 = load<f64>(TIP_COORD_OFFSET+2*sizeOfVariable)
+    let dummyX:f64 = load<f64>(DUMMY_OBJECT_COORD_OFFSET)
+    let dummyY:f64 = load<f64>(DUMMY_OBJECT_COORD_OFFSET+sizeOfVariable)
+    let dummyZ:f64 = load<f64>(DUMMY_OBJECT_COORD_OFFSET+2*sizeOfVariable)
+    //arduino.showArrayRaw(<f32>load<f64>(DUMMY_OBJECT_COORD_OFFSET),<f32>load<f64>(DUMMY_OBJECT_COORD_OFFSET+8),<f32>load<f64>(DUMMY_OBJECT_COORD_OFFSET+2*8),<f32>load<f64>(DUMMY_OBJECT_COORD_OFFSET+2*8))
+    store<f64>(DISTANCE_RESULT_OFFSET,Math.sqrt((Math.pow(coordinateX-dummyX,2)+Math.pow(coordinateY-dummyY,2)+Math.pow(coordinateZ-dummyZ,2))))
+}
+
+export function getDistance():f64{
+  //return distance
+  return load<f64>(DISTANCE_RESULT_OFFSET)
+}
+
+/*TODO: Check SAFETY_DISTANCE. According to the previous thesis: D = 1097.2mm + (2472 ms)*max_robot_speed(mm/ms)
+For max_robot_speed = 1 (mm/ms), D = 3569.2 mm
+*/
+
+
+export function isCollisionDetected():bool{
+  if(distance<SAFETY_DISTANCE){
+    return true
+  }
+  return false
+}
+/*
+export function getTip():f64{
+  return tip[0]
+}*/
