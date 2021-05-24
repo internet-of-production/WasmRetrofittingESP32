@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node tests",
-    "build": "npm run asbuild:optimized && xxd -i build/optimized.wasm > main/esp32/optimized.wasm.h",
+    "build": "npm run asbuild:forwasm3 && xxd -i build/app.wasm > main/esp32/app.wasm.h",
+    "asbuild:forwasm3": "npx asc assembly/index.ts -b build/app.wasm -t build/app.wat -O3 --noAssert --use abort=",
     "create-wasm-header": "xxd -i build/optimized.wasm > main/esp32/app.wasm.h",
     "asbuild:untouched": "asc assembly/index.ts --target debug",
     "asbuild:optimized": "asc assembly/index.ts --target release",
