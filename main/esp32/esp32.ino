@@ -7,15 +7,18 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 
-#include "optimized.wasm.h"
+#include "app.wasm.h"
 
-#define WASM_STACK_SLOTS    3072
+#define WASM_STACK_SLOTS    4000
 #define INPUT_BYTE_LENGTH    9
 
 // For (most) devices that cannot allocate a 64KiB wasm page
-#define WASM_MEMORY_LIMIT   4096
+//#define WASM_MEMORY_LIMIT   4096
 
 #define FATAL(func, msg) { Serial.print("Fatal: " func " "); Serial.println(msg); return; }
+
+int UTF16toUTF8(unsigned char* out, int* outlen,
+          const unsigned char* inb, int* inlenb);
 
 typedef struct{
   int number;
@@ -39,7 +42,11 @@ byte inputBytes[INPUT_BYTE_LENGTH];
 int axisNumber = 0;
 double distance = 0;
 bool unsafe = false;
-StaticJsonDocument<200> doc;
+//StaticJsonDocument<200> doc;
+String jsonString;
+
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
 
 
 /*This function is called in Wasm module*/
@@ -58,6 +65,37 @@ void showArrayRaw(float v1,float v2,float v3,float v4){
   Serial.print(v4);
   Serial.println(", ");
   }
+
+
+m3ApiRawFunction(m3_arduino_printUTF16)
+{
+    m3ApiGetArgMem  (const uint8_t *, buf)
+    m3ApiGetArg     (uint32_t,        len)
+
+    int outlen = len*4;
+    int inlen = len*2;
+    byte out[outlen];
+    UTF16toUTF8(out, &outlen, buf, &inlen);
+
+    Serial.write(out, outlen);
+    client.publish("KUKA",out, outlen);
+    m3ApiSuccess();
+}
+
+m3ApiRawFunction(m3_arduino_jsonEncoder)
+{
+    m3ApiGetArgMem  (const uint8_t *, buf1)
+    m3ApiGetArg     (uint32_t,        len1)
+    m3ApiGetArg     (float,        value1)
+    m3ApiGetArgMem  (const uint8_t *, buf2)
+    m3ApiGetArg     (uint32_t,        len2)
+    m3ApiGetArg     (float,        value2)
+
+    jsonString = jsonEncoder(buf1, len1, value1, buf2, len2, value2);
+    //client.publish("KUKA",jsonString.c_str());
+    
+    m3ApiSuccess();
+}
 
 m3ApiRawFunction(m3_arduino_setaxis)
 {
@@ -85,7 +123,9 @@ m3ApiRawFunction(m3_arduino_showArrayRaw)
 M3Result LinkArduino(IM3Runtime runtime) {
     IM3Module module = runtime->modules;
     const char* arduino = "arduino";
-    
+
+    m3_LinkRawFunction (module, arduino, "printUTF16", "v(*i)", &m3_arduino_printUTF16);
+    m3_LinkRawFunction (module, arduino, "jsonEncoder", "v(*if*if)", &m3_arduino_jsonEncoder);
     m3_LinkRawFunction(module, arduino, "setAxis", "v(if)", &m3_arduino_setaxis);
     m3_LinkRawFunction(module, arduino, "showArrayRaw", "v(ffff)", &m3_arduino_showArrayRaw);
 
@@ -98,8 +138,8 @@ static void run_wasm(void*)
   M3Result result = m3Err_none;
 
 //it warks also without using variable
-  uint8_t* wasm = (uint8_t*)build_optimized_wasm;
-  uint32_t fsize = build_optimized_wasm_len;
+  //uint8_t* wasm = (uint8_t*)build_app_wasm;
+  //uint32_t fsize = build_app_wasm_len;
 
   env = m3_NewEnvironment ();
   if (!env) FATAL("NewEnvironment", "failed");
@@ -111,7 +151,7 @@ static void run_wasm(void*)
     runtime->memoryLimit = WASM_MEMORY_LIMIT;
 #endif
 
-   result = m3_ParseModule (env, &module, wasm, fsize);
+   result = m3_ParseModule (env, &module, build_app_wasm, build_app_wasm_len);
    if (result) FATAL("m3_ParseModule", result);
 
    result = m3_LoadModule (runtime, module);
@@ -150,29 +190,20 @@ static void run_wasm(void*)
 
 //MQTT Client
 //Add your MQTT Broker IP address, example:
-/*
+
 const char* mqtt_server = "MQTT_BROKER_IP_ADDRESS";
 const char* ssid = "SSID";
 const char* password = "PASSWORD";
 const char* mqttUser = "BROKER_USER_NAME";
 const char* mqttPassword = "BROKER_PASSWORD";
 int status = WL_IDLE_STATUS;
-*/
 
-const char* mqtt_server = "192.168.178.52";
-const char* ssid = "FRITZ!Box 7560 YQ";
-const char* password = "19604581320192568195";
-const char* mqttUser = "wasmretrofitting";
-const char* mqttPassword = "wasmretrofitting";
-int status = WL_IDLE_STATUS;
 
-WiFiClient wifiClient;
-PubSubClient client(wifiClient);
-//TODO setup_wifi, connect, pubsub,etc. must be implemented!!
+
 
  void setupWifi() {
 
-  client.setKeepAlive(30);
+  client.setKeepAlive(60);
 
   delay(10);
   // We start by connecting to a WiFi network
@@ -241,7 +272,6 @@ void printCurrentNet(){
 
   }
 
-//TODO implement and understand callback function
 void callback(char* topic, byte* payload, unsigned int length){
     
     }
@@ -249,13 +279,16 @@ void callback(char* topic, byte* payload, unsigned int length){
 
 void setup() {
   Serial.begin(9600);
-  //setupWifi();
+  setupWifi();
 
-  //printCurrentNet();
-  //printWifiData();
+  printCurrentNet();
+  printWifiData();
+
+  printCurrentNet();
+  printWifiData();
   //arguments: server(IPAddress, const char[ ]), port(int)
-  //client.setServer(mqtt_server,1883);
-  //client.setCallback(callback);    
+  client.setServer(mqtt_server,1883);
+  client.setCallback(callback);    
   run_wasm(NULL);
 }
 
@@ -263,10 +296,10 @@ void setup() {
 //i_argv is a const char* array. I have to check how one can insert a binary value in the variable.
 void loop() {
   
-  /*if (!client.connected()) {
+  if (!client.connected()) {
     reconnect();
   }
-  printCurrentNet();*/
+  printCurrentNet();
   
   M3Result result = m3Err_none;
 
@@ -283,12 +316,14 @@ void loop() {
       i_argptrs[i] = &inputBytes[i];
     }
 
-    /*result = m3_Call(dataProcessWasm,INPUT_BYTE_LENGTH,i_argptrs);                       
+    result = m3_Call(dataProcessWasm,INPUT_BYTE_LENGTH,i_argptrs);
     if(result){
       FATAL("m3_Call(dataProcessWasm):", result);
-    }*/
-    
+    }
 
+    client.publish("KUKA",jsonString.c_str());
+
+    /*
     result = m3_Call(setAxisData,INPUT_BYTE_LENGTH,i_argptrs);                       
     if(result){
       FATAL("m3_Call(setAxisData):", result);
@@ -317,16 +352,11 @@ void loop() {
     Serial.println(axis.number);
     Serial.println(axis.value);
     Serial.println(axisNumber);
-    Serial.println(distance);
+    Serial.println(distance);*/
 
-    //Create payload in JSON
-    /*String payload;
-    doc["axis_number"] = axis.number;
-    doc["axis_value"] = axis.value;
-    serializeJson(doc, payload);
   
-    client.publish("KUKA", payload.c_str());*/
   }
-  
+    
     delay(500);
+   
 }

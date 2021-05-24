@@ -92,7 +92,11 @@ export function dataProcessWasm(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,
     axisNumber = -1
   }
 
-  arduino.setAxis(axisNumber,axisValue)
+
+  //arduino.printUTF16(changetype<usize>(jsonString), jsonString.length)
+  let key1:string = "axis_number"
+  let key2:string = "axis_value"
+  arduino.jsonEncoder(changetype<usize>(key1), key1.length, (f32)(axisNumber), changetype<usize>(key2), key2.length, axisValue)
 
 }
 
