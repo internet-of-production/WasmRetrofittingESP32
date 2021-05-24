@@ -34,6 +34,7 @@ IM3Function setAxisData;
 IM3Function getDistance;
 IM3Function isUnsafe;
 IM3Function initAxesCoordinates;
+IM3Function setNetConfigJson;
 //IM3Function add; //add function is declared in Wasm Module.
 
 uint8_t testByteArray[INPUT_BYTE_LENGTH] = {3,0,0,0,32,128,44,128,0};//(DEC)8400000 = (HEX)802C80, (HEX)80=128, (HEX)2C=44
@@ -42,8 +43,9 @@ byte inputBytes[INPUT_BYTE_LENGTH];
 int axisNumber = 0;
 double distance = 0;
 bool unsafe = false;
-//StaticJsonDocument<200> doc;
+
 String jsonString;
+JsonObject confJson;
 
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
@@ -97,6 +99,16 @@ m3ApiRawFunction(m3_arduino_jsonEncoder)
     m3ApiSuccess();
 }
 
+m3ApiRawFunction(m3_arduino_setConfJson)
+{
+    m3ApiGetArgMem  (const uint8_t *, buf)
+    m3ApiGetArg     (uint32_t,        len)
+
+    confJson = setConfJson(buf, len);
+    
+    m3ApiSuccess();
+}
+
 m3ApiRawFunction(m3_arduino_setaxis)
 {
     m3ApiGetArg     (uint32_t, number)
@@ -126,6 +138,7 @@ M3Result LinkArduino(IM3Runtime runtime) {
 
     m3_LinkRawFunction (module, arduino, "printUTF16", "v(*i)", &m3_arduino_printUTF16);
     m3_LinkRawFunction (module, arduino, "jsonEncoder", "v(*if*if)", &m3_arduino_jsonEncoder);
+    m3_LinkRawFunction (module, arduino, "setConfJson", "v(*i)", &m3_arduino_setConfJson);
     m3_LinkRawFunction(module, arduino, "setAxis", "v(if)", &m3_arduino_setaxis);
     m3_LinkRawFunction(module, arduino, "showArrayRaw", "v(ffff)", &m3_arduino_showArrayRaw);
 
@@ -183,6 +196,14 @@ static void run_wasm(void*)
         FATAL("m3_Call(initAxesCoordinates):", result);
         }
 
+   result = m3_FindFunction (&setNetConfigJson, runtime, "setNetConfigJson");
+   if (result) FATAL("m3_FindFunction(setNetConfigJson)", result);
+
+   result = m3_Call(setNetConfigJson,0,NULL);                       
+        if(result){
+        FATAL("m3_Call(setNetConfigJson):", result);
+        }
+
    Serial.println("Running WebAssembly...");
 
   
@@ -190,19 +211,22 @@ static void run_wasm(void*)
 
 //MQTT Client
 //Add your MQTT Broker IP address, example:
-
+/*
 const char* mqtt_server = "MQTT_BROKER_IP_ADDRESS";
 const char* ssid = "SSID";
 const char* password = "PASSWORD";
 const char* mqttUser = "BROKER_USER_NAME";
 const char* mqttPassword = "BROKER_PASSWORD";
+int status = WL_IDLE_STATUS;*/
+
 int status = WL_IDLE_STATUS;
-
-
 
 
  void setupWifi() {
 
+  const char* ssid = confJson["ssid"];
+  const char* password = confJson["password"];
+  
   client.setKeepAlive(60);
 
   delay(10);
@@ -230,6 +254,14 @@ int status = WL_IDLE_STATUS;
 
  
 void reconnect() {
+
+  const char* mqttUser = confJson["mqtt_user"];
+  const char* mqttPassword = confJson["mqtt_password"];
+
+  Serial.println(mqttUser);
+  Serial.println(mqttPassword);
+  
+
   // Loop until we're reconnected
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
@@ -279,6 +311,9 @@ void callback(char* topic, byte* payload, unsigned int length){
 
 void setup() {
   Serial.begin(9600);
+
+  run_wasm(NULL);
+  
   setupWifi();
 
   printCurrentNet();
@@ -287,9 +322,11 @@ void setup() {
   printCurrentNet();
   printWifiData();
   //arguments: server(IPAddress, const char[ ]), port(int)
-  client.setServer(mqtt_server,1883);
+
+  const char* mqtt_server = confJson["mqtt_server"];
+  int port = confJson["mqtt_port"];
+  client.setServer(mqtt_server,port);
   client.setCallback(callback);    
-  run_wasm(NULL);
 }
 
 

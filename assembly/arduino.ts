@@ -22,3 +22,7 @@ export function println(str: string): void {
 // @ts-ignore: decorator
 @external("jsonEncoder")
 export declare function jsonEncoder(ptr1: usize, len1: usize, value1: f32, ptr2: usize, len2: usize, value2: f32): void;
+
+// @ts-ignore: decorator
+@external("setConfJson")
+export declare function setConfJson(ptr: usize, len: usize): void;

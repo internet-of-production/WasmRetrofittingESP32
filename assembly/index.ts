@@ -1,5 +1,5 @@
 import * as arduino from "./arduino";
-//import {calcDistance, getDistance, isCollisionDetected} from "./collision-detection"
+
 // By growing our Wasm Memory by 1 page (64KB)
 memory.grow(1);
 
@@ -293,3 +293,9 @@ export function isCollisionDetected():bool{
 export function getTip():f64{
   return tip[0]
 }*/
+
+export function setNetConfigJson():void{
+  //mqtt_server, ssid, password, mqtt_user, mqtt_password, mqtt_port
+  let jsonString:string = '{\"mqtt_server\": \"XX.XX.XX.XX\", \"ssid\": \"YOUR_ID\",\"password\": \"NETWORK_PASSWD\",\"mqtt_user\": \"MQTT_USER\",\"mqtt_password\": \"MQTT_PASSWD\",\"mqtt_port\": 1883}'
+  arduino.setConfJson(changetype<usize>(jsonString), jsonString.length)
+}
