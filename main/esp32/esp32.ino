@@ -43,8 +43,10 @@ byte inputBytes[INPUT_BYTE_LENGTH];
 int axisNumber = 0;
 double distance = 0;
 bool unsafe = false;
+int JSONCounter = 0;
 
 String jsonString;
+String mergedJsonString="{}";
 JsonObject confJson;
 
 WiFiClient wifiClient;
@@ -86,15 +88,15 @@ m3ApiRawFunction(m3_arduino_printUTF16)
 
 m3ApiRawFunction(m3_arduino_jsonEncoder)
 {
-    m3ApiGetArgMem  (const uint8_t *, buf1)
-    m3ApiGetArg     (uint32_t,        len1)
-    m3ApiGetArg     (float,        value1)
-    m3ApiGetArgMem  (const uint8_t *, buf2)
-    m3ApiGetArg     (uint32_t,        len2)
-    m3ApiGetArg     (float,        value2)
+    m3ApiGetArgMem  (const uint8_t *, buf)
+    m3ApiGetArg     (uint32_t,        len)
+    m3ApiGetArg     (uint32_t,        number)
+    m3ApiGetArg     (float,        value)
+   
 
-    jsonString = jsonEncoder(buf1, len1, value1, buf2, len2, value2);
-    //client.publish("KUKA",jsonString.c_str());
+    jsonString = jsonEncoder(buf, len, number, value);
+    mergedJsonString = jsonMerge(mergedJsonString,jsonString);
+    
     
     m3ApiSuccess();
 }
@@ -137,7 +139,7 @@ M3Result LinkArduino(IM3Runtime runtime) {
     const char* arduino = "arduino";
 
     m3_LinkRawFunction (module, arduino, "printUTF16", "v(*i)", &m3_arduino_printUTF16);
-    m3_LinkRawFunction (module, arduino, "jsonEncoder", "v(*if*if)", &m3_arduino_jsonEncoder);
+    m3_LinkRawFunction (module, arduino, "jsonEncoder", "v(*iif)", &m3_arduino_jsonEncoder);
     m3_LinkRawFunction (module, arduino, "setConfJson", "v(*i)", &m3_arduino_setConfJson);
     m3_LinkRawFunction(module, arduino, "setAxis", "v(if)", &m3_arduino_setaxis);
     m3_LinkRawFunction(module, arduino, "showArrayRaw", "v(ffff)", &m3_arduino_showArrayRaw);
@@ -299,8 +301,8 @@ void printCurrentNet(){
 
   //print the received signal strength
   long rssi = WiFi.RSSI();
-  Serial.print("signal strength (RSSI):");
-  Serial.println(rssi);
+  //Serial.print("signal strength (RSSI):");
+  //Serial.println(rssi);
 
   }
 
@@ -336,7 +338,7 @@ void loop() {
   if (!client.connected()) {
     reconnect();
   }
-  printCurrentNet();
+  //printCurrentNet();
   
   M3Result result = m3Err_none;
 
@@ -345,7 +347,7 @@ void loop() {
     int bufferLength = Serial.readBytes(inputBytes, INPUT_BYTE_LENGTH);
 
     // prints the received data
-    Serial.println("I send data");
+    //Serial.println("reading data...");
     //pointers of arguments for dataProcessWasm
     const void *i_argptrs[INPUT_BYTE_LENGTH];
 
@@ -353,14 +355,21 @@ void loop() {
       i_argptrs[i] = &inputBytes[i];
     }
 
-    result = m3_Call(dataProcessWasm,INPUT_BYTE_LENGTH,i_argptrs);
+    /*result = m3_Call(dataProcessWasm,INPUT_BYTE_LENGTH,i_argptrs);
     if(result){
       FATAL("m3_Call(dataProcessWasm):", result);
     }
 
-    client.publish("KUKA",jsonString.c_str());
+    JSONCounter++;
 
-    /*
+    if(JSONCounter == 7){
+      if(isJsonStrValid(mergedJsonString)){
+        client.publish("KUKA", mergedJsonString.c_str());
+      }
+      mergedJsonString = "{}";
+      JSONCounter = 0;
+    }*/
+    
     result = m3_Call(setAxisData,INPUT_BYTE_LENGTH,i_argptrs);                       
     if(result){
       FATAL("m3_Call(setAxisData):", result);
@@ -383,17 +392,16 @@ void loop() {
       if(result){
       FATAL("m3_GetResultsV(getDistance):", result);
       }
-    
-    }
 
-    Serial.println(axis.number);
-    Serial.println(axis.value);
-    Serial.println(axisNumber);
-    Serial.println(distance);*/
+      Serial.println(distance);
+      /*char cstr[16];
+      itoa(distance, cstr, 10);
+      client.publish("KUKA", cstr);*/
+    }
 
   
   }
     
-    delay(500);
+    delay(100);
    
 }

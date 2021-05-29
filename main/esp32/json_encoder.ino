@@ -1,40 +1,30 @@
 #include <ArduinoJson.h>
 
-StaticJsonDocument<200> doc;
 StaticJsonDocument<400> docConfig;
 
-String jsonEncoder(const uint8_t * buf1, uint32_t len1, float value1, const uint8_t * buf2, uint32_t len2, float value2){
-  
-  
-  int outlen1 = len1*4;
-  int inlen1 = len1*2;
-  byte out1[outlen1];
+//Create Json: "{axis_N: value}"
+String jsonEncoder(const uint8_t * buf, uint32_t len, uint32_t axisNumber, float axisValue){
 
-  int outlen2 = len2*4;
-  int inlen2 = len2*2;
-  byte out2[outlen2];
+  StaticJsonDocument<200> doc;
   
-  UTF16toUTF8(out1, &outlen1, buf1, &inlen1);
-  UTF16toUTF8(out2, &outlen2, buf2, &inlen2);
+  int outlen = len*4;
+  int inlen = len*2;
+  byte out[outlen];
   
-  char key1[len1 + 1];
-  memcpy(key1, out1, len1);
-  key1[len1] = 0; // Null termination.
-  String keyString1 = String(key1);
+  UTF16toUTF8(out, &outlen, buf, &inlen);
+  
+  char key[len + 1];
+  memcpy(key, out, len);
+  key[len] = 0; // Null termination.
+  String keyString = String(key)+String(axisNumber);
 
-  char key2[len2 + 1];
-  memcpy(key2, out2, len2);
-  key2[len2] = 0; // Null termination.
-  String keyString2 = String(key2);
 
   String jsonResult;
-  doc[keyString1] = value1;
-  doc[keyString2] = value2;
+  doc[keyString] = axisValue;
   
   serializeJson(doc, jsonResult);
   //serializeJson(doc, Serial);
 
-  //String jsonString = "{"+ key3 + ":" + String(value1) + "," + key2 + ":" + String(value2) + "}";
   return jsonResult;
 
 }
@@ -56,4 +46,47 @@ JsonObject setConfJson(const uint8_t * buf, uint32_t len){
   JsonObject obj = docConfig.as<JsonObject>();
   return obj;
   
+  }
+
+String jsonMerge(String destString, String srcString)
+{
+   StaticJsonDocument<400> docDest;
+   StaticJsonDocument<200> docSrc;
+  
+   deserializeJson(docDest,destString);
+   deserializeJson(docSrc,srcString);
+
+   JsonObject dest = docDest.as<JsonObject>();
+   JsonObjectConst src = docSrc.as<JsonObject>();  
+     
+   for (auto item : src)
+   {
+     dest[item.key()] = item.value();
+   }
+   
+   String res;
+   serializeJson(docDest,res);
+
+   return res;
+}
+
+bool isJsonStrValid(String src){
+  
+  Serial.println(src);
+  StaticJsonDocument<400> docCheck;
+ 
+  // Deserialize the JSON document
+  DeserializationError error = deserializeJson(docCheck,src);
+
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return false;
+  }
+
+  float value = docCheck["invalid0"];
+  Serial.println(value);
+  
+  return value == 0; 
   }

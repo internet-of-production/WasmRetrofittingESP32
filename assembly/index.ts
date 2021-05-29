@@ -3,11 +3,16 @@ import * as arduino from "./arduino";
 // By growing our Wasm Memory by 1 page (64KB)
 memory.grow(1);
 
-let axisNumber:i32 = 0;
-let axisValue:f32 = 0;
+//let axisNumber:i32 = 0;
+//let axisValue:f32 = 0;
 let axesArray:Array<f32> = [0,0,0,0,0,0,0];
-let distance:f32 = 0
-const SAFETY_DISTANCE :f64 = 1500
+let distance:f32 = 0;
+let errorFreeJson:bool = true;
+let errorFreeData:bool = true;
+let axesDataCounter = 0;
+let axesJsonCounter = 0;
+const SAFETY_DISTANCE :f64 = 1500;
+const INVALID_FLAG:f32 = 1;
 
 const AXES_ARRAY_OFFSET = 0; //from 0 to 55 for an array with length 7 (Axis1-7)
 const A2_IN_A1_COORD_OFFSET = 56; //56-67, i32
@@ -15,7 +20,7 @@ const A3_IN_A2_COORD_OFFSET = 68; //68- 79
 const A4_IN_A3_COORD_OFFSET = 80; //80-91
 const TIP_ARRAY_OFFSET = 92;//92-123
 const DUMMY_OBJECT_COORD_OFFSET = 124;//124-147
-const DISTANCE_RESULT_OFFSET = 148//148-155
+const DISTANCE_RESULT_OFFSET = 148;//148-155
 const HT_MATRIX_OFFSET01 = 200;//200-327
 const HT_MATRIX_OFFSET12 = 350;//350-477
 const HT_MATRIX_OFFSET23 = 500;//500-627
@@ -56,22 +61,15 @@ export function initAxesCoordinates():void{
 }
 
 
-//TODO:Check the sign of minus (or plus) values. According to a previous thesis, 32 means positive.
-function isPositive(sign:i32):bool{
-  if(sign==32){
-    return true
-  }
-  return false
-}
 
-export function convertNumber(dataArray:Uint8Array):i32{
+/*export function convertNumber(dataArray:Uint8Array):i32{
   let convertedValue:i32=0
   for(let i:i32 = 3; i>=0;i--){
     convertedValue = (convertedValue<<8) + dataArray[i]
   }
 
   return  convertedValue;
-}
+}*/
 
 function convertNum(num1:u8,num2:u8,num3:u8,num4:u8):i32{
   let convertedValue:i32= num4
@@ -81,49 +79,118 @@ function convertNum(num1:u8,num2:u8,num3:u8,num4:u8):i32{
   return convertedValue;
 }
 
+function isAxisValueValid(number:i32, value:f64):bool{
+
+  switch (number) {
+    case 1:
+      return (-185<=value && value<=185);
+    case 2:
+      return (-146<=value && value<=0);
+    case 3:
+      return (-119<=value && value<=155);
+    case 4:
+      return (-350<=value && value<=350);
+    case 5:
+      return (-125<=value && value<=125);
+    case 6:
+      return (-350<=value && value<=350);
+    case 7: //TODO: Add checking external axis (linear, 7th axis)
+      return true;
+    default: {
+      return false;
+    }
+  }
+}
+
+
 //1st byte is the id of axes. It returns the value in the JSON format.
 export function dataProcessWasm(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,sign:u8, axisval1:u8,axisval2:u8,axisval3:u8,axisval4:u8):void{
 
-  axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
-  axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4)/100000.0)
-  //axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
+  axesJsonCounter++
 
-  if(axisNumber<0 || axisNumber>7){
-    axisNumber = -1
+  if(!errorFreeJson){
+    if(axesJsonCounter==7){
+      errorFreeJson = true
+      axesJsonCounter = 0
+    }
+    let invalidKey:string = "invalid"
+    arduino.jsonEncoder(changetype<usize>(invalidKey), invalidKey.length, 0, INVALID_FLAG)
+    return;
   }
 
+  let axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
+  let axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4)/100000.0)
+  //axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
 
-  //arduino.printUTF16(changetype<usize>(jsonString), jsonString.length)
-  let key1:string = "axis_number"
-  let key2:string = "axis_value"
-  arduino.jsonEncoder(changetype<usize>(key1), key1.length, (f32)(axisNumber), changetype<usize>(key2), key2.length, axisValue)
+  if(axisNumber<1 || axisNumber>7 || !isAxisValueValid(axisNumber,axisValue)){
+
+    if(axesJsonCounter==7){
+      axesJsonCounter = 0
+    }
+    else{
+      errorFreeJson = false
+    }
+
+    let invalidKey:string = "invalid"
+    arduino.jsonEncoder(changetype<usize>(invalidKey), invalidKey.length, 0, INVALID_FLAG)
+  }
+  else{
+    let key:string = "axis_"
+    arduino.jsonEncoder(changetype<usize>(key), key.length, axisNumber, axisValue)
+
+    if(axesJsonCounter==7){
+      axesJsonCounter = 0
+    }
+  }
 
 }
 
-//TODO:f64だと確かArduinoに値がうまく渡せないはず。要チェック.arduinoに結果渡すの面倒なので関数使って渡す。（返値一つならなんとかなるかもしれない）
 
 function storeAxisValue(number:i32,value:f32): void{
   axesArray[number] = value
 }
 
+/*
+  Reverse positive and negative angles to copy them in coordinate system.
+  It assumes that the robot's base stands on the ground, and the initial position of the tip is positive (on the x-y plane).
+  Therefore, the clockwise rotation is negative, the counterclockwise is positive, but KUKA robots outputs the opposite
+  */
 export function setAxisData(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,sign:u8, axisval1:u8,axisval2:u8,axisval3:u8,axisval4:u8):i32{
-  axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
-  axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
 
-  if(isPositive(sign)&&axisValue !=0){
-    axisValue = -axisValue
+  axesDataCounter++
+
+  if(!errorFreeData){
+    if(axesDataCounter==7){
+      errorFreeData = true
+      axesDataCounter = 0
+    }
+    return 0
   }
 
-  let sizeOfValue = 8;//f64
-  if(axisNumber == 7){
-    //TODO: とにかく変数を参照して代入するとクラッシュするからどうしたらいいかわからん
-    store<f64>(AXES_ARRAY_OFFSET+(axisNumber-1)*sizeOfValue,axisValue)//Bei der direkten Einsetzung gibt arduino einen Error "InstrFetchProhibited" und "missing imported function" aus.
-    calcDistance();
+  let axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
+  let axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
+
+  if(axisNumber<1 || axisNumber>7 || !isAxisValueValid(axisNumber,axisValue)){
+    if(axisNumber==7){
+      axesDataCounter = 0
+    }
+    else{
+      errorFreeData = false
+    }
+      return 0
   }
   else{
-    store<f64>(AXES_ARRAY_OFFSET+(axisNumber-1)*sizeOfValue,axisValue)
+    let sizeOfValue = 8;//f64
+    if(axisNumber == 7){
+      store<f64>(AXES_ARRAY_OFFSET+(axisNumber-1)*sizeOfValue,-axisValue)//Reverse the sign of the value
+      axesDataCounter = 0
+      calcDistance()
+    }
+    else{
+      store<f64>(AXES_ARRAY_OFFSET+(axisNumber-1)*sizeOfValue,-axisValue)//Reverse the sign of the value
+    }
+    return axisNumber
   }
-  return axisNumber
 }
 
 /*
@@ -296,6 +363,7 @@ export function getTip():f64{
 
 export function setNetConfigJson():void{
   //mqtt_server, ssid, password, mqtt_user, mqtt_password, mqtt_port
-  let jsonString:string = '{\"mqtt_server\": \"XX.XX.XX.XX\", \"ssid\": \"YOUR_ID\",\"password\": \"NETWORK_PASSWD\",\"mqtt_user\": \"MQTT_USER\",\"mqtt_password\": \"MQTT_PASSWD\",\"mqtt_port\": 1883}'
+  //let jsonString:string = '{\"mqtt_server\": \"XX.XX.XX.XX\", \"ssid\": \"YOUR_ID\",\"password\": \"NETWORK_PASSWD\",\"mqtt_user\": \"MQTT_USER\",\"mqtt_password\": \"MQTT_PASSWD\",\"mqtt_port\": 1883}'
+  let jsonString:string = '{\"mqtt_server\": \"192.168.178.52\", \"ssid\": \"FRITZ!Box 7560 YQ\",\"password\": \"19604581320192568195\",\"mqtt_user\": \"wasmretrofitting\",\"mqtt_password\": \"wasmretrofitting\",\"mqtt_port\": 1883}'
   arduino.setConfJson(changetype<usize>(jsonString), jsonString.length)
 }
