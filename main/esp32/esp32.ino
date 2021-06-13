@@ -3,14 +3,21 @@
 #include "m3_api_defs.h"
 
 #include <SPI.h>
-#include <WiFi.h>
+//#include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <esp_wifi.h>
+#include <esp_wpa2.h>
 
 #include "app.wasm.h"
+#include "Secret.h"
 
 #define WASM_STACK_SLOTS    4000
 #define INPUT_BYTE_LENGTH    9
+#define SERIAL_SIZE_RX  256
+#define INTERVAL 0
+#define RTT_NUMBER 100 
 
 // For (most) devices that cannot allocate a 64KiB wasm page
 //#define WASM_MEMORY_LIMIT   4096
@@ -19,6 +26,8 @@
 
 int UTF16toUTF8(unsigned char* out, int* outlen,
           const unsigned char* inb, int* inlenb);
+
+void callback(char* topic, byte* payload, unsigned int length);
 
 typedef struct{
   int number;
@@ -37,19 +46,24 @@ IM3Function initAxesCoordinates;
 IM3Function setNetConfigJson;
 //IM3Function add; //add function is declared in Wasm Module.
 
+
+unsigned long prev, interval;
 uint8_t testByteArray[INPUT_BYTE_LENGTH] = {3,0,0,0,32,128,44,128,0};//(DEC)8400000 = (HEX)802C80, (HEX)80=128, (HEX)2C=44
 axis_t axis = {0,0.0};
-byte inputBytes[INPUT_BYTE_LENGTH];
 int axisNumber = 0;
 double distance = 0;
 bool unsafe = false;
 int JSONCounter = 0;
+int arrival_counter = 0;
 
-String jsonString;
+uint8_t newMACAddress[] = {0x24, 0x6f, 0x28, 0x24, 0xff, 0x60};
+
 String mergedJsonString="{}";
 JsonObject confJson;
 
-WiFiClient wifiClient;
+const char *root_ca = ROOTCERT;
+
+WiFiClientSecure wifiClient;
 PubSubClient client(wifiClient);
 
 
@@ -94,7 +108,7 @@ m3ApiRawFunction(m3_arduino_jsonEncoder)
     m3ApiGetArg     (float,        value)
    
 
-    jsonString = jsonEncoder(buf, len, number, value);
+    String jsonString = jsonEncoder(buf, len, number, value);
     mergedJsonString = jsonMerge(mergedJsonString,jsonString);
     
     
@@ -154,7 +168,6 @@ static void run_wasm(void*)
 
 //it warks also without using variable
   //uint8_t* wasm = (uint8_t*)build_app_wasm;
-  //uint32_t fsize = build_app_wasm_len;
 
   env = m3_NewEnvironment ();
   if (!env) FATAL("NewEnvironment", "failed");
@@ -228,8 +241,10 @@ int status = WL_IDLE_STATUS;
 
   const char* ssid = confJson["ssid"];
   const char* password = confJson["password"];
+  //const char* ssid = RWTH_ID;
+  //const char* password = RWTH_PASS;
   
-  client.setKeepAlive(60);
+  client.setKeepAlive(10);
 
   delay(10);
   // We start by connecting to a WiFi network
@@ -238,7 +253,10 @@ int status = WL_IDLE_STATUS;
   Serial.println(ssid);
 
   WiFi.mode(WIFI_STA);
+  //esp_wifi_set_mac(WIFI_IF_STA, &newMACAddress[0]);
+  
   WiFi.begin(ssid, password);
+  //WiFi.begin(ssid);
 
   while (status != WL_CONNECTED) {
     delay(500);
@@ -276,7 +294,11 @@ void reconnect() {
       // Once connected, publish an announcement...
       client.publish("KUKA", "hello world");
       // ... and resubscribe
-      client.subscribe("inTopic");
+      boolean success = client.subscribe("KUKAAxes/return");
+      if(success){
+        Serial.print("Subscribe successful");
+        }
+      
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -307,12 +329,27 @@ void printCurrentNet(){
   }
 
 void callback(char* topic, byte* payload, unsigned int length){
-    
+    unsigned long rtt_end = millis();
+    //Serial.print("Message arrived in topic: ");
+    //Serial.println(topic);
+
+    if(arrival_counter < 100){
+        char cstr[16];
+        itoa(rtt_end, cstr, 10);
+        client.publish("RTTEnd", cstr);
     }
+    arrival_counter++;
+    //char cstr[16];
+    //itoa(rtt_end, cstr, 10);
+    //client.publish("RTTEnd", cstr);
+    
+    
+  }
 
 
 void setup() {
   Serial.begin(9600);
+  Serial.setRxBufferSize(SERIAL_SIZE_RX);
 
   run_wasm(NULL);
   
@@ -324,11 +361,20 @@ void setup() {
   printCurrentNet();
   printWifiData();
   //arguments: server(IPAddress, const char[ ]), port(int)
+  //const char* mqtt_server = confJson["mqtt_server"];
+  const char* mqtt_server = "192.168.178.52";
+  //int port = confJson["mqtt_port"];
+  int port = 8883;
 
-  const char* mqtt_server = confJson["mqtt_server"];
-  int port = confJson["mqtt_port"];
+  //setinterval
+  prev = 0; 
+  interval = INTERVAL;
+
+  wifiClient.setCACert(root_ca);
+  wifiClient.setInsecure();
+  
   client.setServer(mqtt_server,port);
-  client.setCallback(callback);    
+  client.setCallback(callback);
 }
 
 
@@ -338,13 +384,23 @@ void loop() {
   if (!client.connected()) {
     reconnect();
   }
-  //printCurrentNet();
+
+  client.loop();//This should be called regularly to allow the client to process incoming messages and maintain its connection to the server.
   
   M3Result result = m3Err_none;
 
-  if (Serial.available() > 0) {
+  unsigned long current = millis(); 
+  byte inputBytes[INPUT_BYTE_LENGTH];
+
+  if(Serial.available() && (current-prev) >= interval){
     // read the incoming bytes:
     int bufferLength = Serial.readBytes(inputBytes, INPUT_BYTE_LENGTH);
+
+    //resetCounter and JSONString
+    if(inputBytes[0]==1){
+      mergedJsonString = "{}";
+      JSONCounter = 0;
+      }
 
     // prints the received data
     //Serial.println("reading data...");
@@ -355,20 +411,30 @@ void loop() {
       i_argptrs[i] = &inputBytes[i];
     }
 
-    /*result = m3_Call(dataProcessWasm,INPUT_BYTE_LENGTH,i_argptrs);
+    
+    result = m3_Call(dataProcessWasm,INPUT_BYTE_LENGTH,i_argptrs);
     if(result){
       FATAL("m3_Call(dataProcessWasm):", result);
     }
+    
 
     JSONCounter++;
 
     if(JSONCounter == 7){
       if(isJsonStrValid(mergedJsonString)){
+        unsigned long rtt_end = millis();
+        char cstr[16];
+        itoa(rtt_end, cstr, 10);
+        client.publish("RTTStart", cstr);
         client.publish("KUKA", mergedJsonString.c_str());
+       
       }
       mergedJsonString = "{}";
       JSONCounter = 0;
-    }*/
+    }
+
+    /*
+    unsigned long start = micros();
     
     result = m3_Call(setAxisData,INPUT_BYTE_LENGTH,i_argptrs);                       
     if(result){
@@ -379,8 +445,13 @@ void loop() {
       if(result){
       FATAL("m3_GetResultsV(setAxisData):", result);
       }
-  
 
+    unsigned long calc_time = micros()-start;
+    char cstr[16];
+    itoa(calc_time, cstr, 10);
+    client.publish("CALC",cstr);
+  
+    //Serial.println(axisNumber);
     if(axisNumber == 7){    
       result = m3_Call(getDistance,0,NULL);                       
         if(result){
@@ -393,15 +464,15 @@ void loop() {
       FATAL("m3_GetResultsV(getDistance):", result);
       }
 
-      Serial.println(distance);
-      /*char cstr[16];
+      //Serial.println(distance);
+      char cstr[16];
       itoa(distance, cstr, 10);
-      client.publish("KUKA", cstr);*/
-    }
+      client.publish("KUKA", cstr);
+    }*/
 
+    //set time 
+    prev = current; 
   
   }
-    
-    delay(100);
    
 }
