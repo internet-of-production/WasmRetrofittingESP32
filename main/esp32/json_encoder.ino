@@ -86,7 +86,6 @@ bool isJsonStrValid(String src){
   }
 
   float value = docCheck["invalid0"];
-  Serial.println(value);
   
   return value == 0; 
   }

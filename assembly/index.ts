@@ -14,6 +14,7 @@ let axesJsonCounter = 0;
 const SAFETY_DISTANCE :f64 = 1500;
 const INVALID_FLAG:f32 = 1;
 
+//TODO: define more efficient offset
 const AXES_ARRAY_OFFSET = 0; //from 0 to 55 for an array with length 7 (Axis1-7)
 const A2_IN_A1_COORD_OFFSET = 56; //56-67, i32
 const A3_IN_A2_COORD_OFFSET = 68; //68- 79
@@ -168,7 +169,7 @@ export function setAxisData(axisnum1:u8,axisnum2:u8,axisnum3:u8,axisnum4:u8,sign
   }
 
   let axisNumber = convertNum(axisnum1,axisnum2,axisnum3,axisnum4)
-  let axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4))
+  let axisValue = (f32)(convertNum(axisval1,axisval2,axisval3,axisval4)/100000.0)
 
   if(axisNumber<1 || axisNumber>7 || !isAxisValueValid(axisNumber,axisValue)){
     if(axisNumber==7){
