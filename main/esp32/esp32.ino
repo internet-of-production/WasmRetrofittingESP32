@@ -1,6 +1,8 @@
 #include "wasm3.h"
 #include "m3_env.h"
-#include "m3_api_defs.h"
+#include "wasm3_defs.h"
+
+
 
 #include <SPI.h>
 //#include <WiFi.h>
@@ -12,6 +14,18 @@
 
 #include "app.wasm.h"
 #include "Secret.h"
+
+//setting for rs232 (max3323)
+#include <ctype.h>
+
+#define bit9600Delay 100  
+#define halfBit9600Delay 50
+#define bit4800Delay 188
+#define halfBit4800Delay 94
+
+byte rx = 6;
+byte tx = 7;
+byte SWval;
 
 #define WASM_STACK_SLOTS    4000
 #define INPUT_BYTE_LENGTH    9
@@ -347,10 +361,58 @@ void callback(char* topic, byte* payload, unsigned int length){
   }
 
 
+void SWprint(int data)
+{
+  byte mask;
+  //startbit
+  digitalWrite(tx,LOW);
+  delayMicroseconds(bit9600Delay);
+  for (mask = 0x01; mask>0; mask <<= 1) {
+    if (data & mask){ // choose bit
+     digitalWrite(tx,HIGH); // send 1
+    }
+    else{
+     digitalWrite(tx,LOW); // send 0
+    }
+    delayMicroseconds(bit9600Delay);
+  }
+  //stop bit
+  digitalWrite(tx, HIGH);
+  delayMicroseconds(bit9600Delay);
+}
+
+int SWread()
+{
+  byte val = 0;
+  while (digitalRead(rx));
+  //wait for start bit
+  if (digitalRead(rx) == LOW) {
+    delayMicroseconds(halfBit9600Delay);
+    for (int offset = 0; offset < 8; offset++) {
+     delayMicroseconds(bit9600Delay);
+     val |= digitalRead(rx) << offset;
+    }
+    //wait for stop bit + extra
+    delayMicroseconds(bit9600Delay);
+    delayMicroseconds(bit9600Delay);
+    return val;
+  }
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.setRxBufferSize(SERIAL_SIZE_RX);
 
+//rs232setting
+  /*pinMode(rx,INPUT);
+  pinMode(tx,OUTPUT);
+  digitalWrite(tx,HIGH);
+  delay(2);
+  digitalWrite(13,HIGH); //turn on debugging LED
+  SWprint('h');  //debugging hello
+  SWprint('i');
+  SWprint(10); //carriage return*/
+  
   run_wasm(NULL);
   
   setupWifi();
@@ -362,7 +424,7 @@ void setup() {
   printWifiData();
   //arguments: server(IPAddress, const char[ ]), port(int)
   //const char* mqtt_server = confJson["mqtt_server"];
-  const char* mqtt_server = "192.168.178.52";
+  const char* mqtt_server = "192.168.178.34";
   //int port = confJson["mqtt_port"];
   int port = 8883;
 
@@ -391,6 +453,9 @@ void loop() {
 
   unsigned long current = millis(); 
   byte inputBytes[INPUT_BYTE_LENGTH];
+
+//read from rs232 (max3323 MC)
+  SWval = SWread();
 
   if(Serial.available() && (current-prev) >= interval){
     // read the incoming bytes:
@@ -471,6 +536,12 @@ void loop() {
     }*/
 
     //set time 
+
+    /*if(SWval){
+      char res[1];
+      res[0] = (char)SWval;
+      client.publish("KUKA", res);
+      }*/
     prev = current; 
   
   }
