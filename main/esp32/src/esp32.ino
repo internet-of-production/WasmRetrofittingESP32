@@ -11,6 +11,10 @@
 #include <ArduinoJson.h>
 #include <esp_wifi.h>
 #include <esp_wpa2.h>
+//Web Server
+#include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>
+#include <SPIFFS.h>
 
 #include "app.wasm.h"
 #include "Secret.h"
@@ -47,6 +51,8 @@ typedef struct{
   int number;
   float value;
   } axis_t;
+
+AsyncWebServer server(80);
 
 
 IM3Environment env;
@@ -399,6 +405,24 @@ int SWread()
   }
 }
 
+void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+    if (!index) {
+        Serial.println((String)"UploadStart: " + filename);
+        // open the file on first call and store the file handle in the request object
+        request->_tempFile = SPIFFS.open("/" + filename, "w");
+    }
+    if (len) {
+        // stream the incoming chunk to the opened file
+        request->_tempFile.write(data, len);
+    }
+    if (final) {
+        Serial.println((String)"UploadEnd: " + filename + "," + index+len);
+        // close the file handle as the upload is now done
+        request->_tempFile.close();
+        request->send(200, "text/plain", "File Uploaded !");
+    }
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.setRxBufferSize(SERIAL_SIZE_RX);
@@ -414,6 +438,12 @@ void setup() {
   SWprint(10); //carriage return*/
   
   run_wasm(NULL);
+
+  // https://randomnerdtutorials.com/esp32-web-server-spiffs-spi-flash-file-system/
+  if(!SPIFFS.begin(true)){
+  Serial.println("An Error has occurred while mounting SPIFFS");
+  return;
+ }
   
   setupWifi();
 
@@ -437,6 +467,40 @@ void setup() {
   
   client.setServer(mqtt_server,port);
   client.setCallback(callback);
+
+  if ( !MDNS.begin("esp32") ) {
+    Serial.println( "Error setting up MDNS responder!" );
+    while(1) {
+        delay(1000);
+    }
+  }
+  Serial.println( "mDNS responder started" );
+
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, PUT");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(SPIFFS, "/ide.html");
+  });
+
+  server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
+      request->send(200);
+      }, handleUpload);
+
+  server.serveStatic("/", SPIFFS, "/").setDefaultFile("ide.html");
+
+  server.onNotFound([](AsyncWebServerRequest *request) {
+      if (request->method() == HTTP_OPTIONS) {
+          request->send(200);
+      } else {
+          Serial.println("Not found");
+          request->send(404, "Not found");
+      }
+  });
+
+  server.begin();
+
 }
 
 
