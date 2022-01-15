@@ -1,0 +1,80 @@
+<html>
+  <head>
+<script type="text/javascript">
+  function compileCode() {
+    require([ "https://cdn.jsdelivr.net/npm/assemblyscript@latest/dist/sdk.js" ], ({ asc }) => {
+    asc.ready.then(async () => {
+        console.log("Compiling code...");
+
+        const SOURCE_CODE = document.getElementById('source').value;
+
+        try {
+          const { text, binary } = asc.compileString({ ['main.ts']: SOURCE_CODE }, {
+            optimizeLevel: 3,
+            runtime: "none"
+          });
+          console.log(`>>> TEXT >>>\n${text}`);
+          console.log(`>>> BINARY >>>\n${binary.length} bytes`);
+
+          // upload file
+          //const fileInput = document.getElementById('form-upload') ;
+          const formData = new FormData();
+
+          const blob = new Blob([binary]);
+          formData.append('file', blob, "main.wasm");
+
+          const options = {
+            method: 'POST',
+            body: formData,
+          };
+
+          fetch('/upload', options);
+
+        } catch (e) {
+          console.log('A compilation error occured.');
+        }
+      });
+    });
+  }
+</script>
+<style>
+  textarea {
+    width: 500px;
+    height: 500px;
+  }
+</style>
+  </head>
+  <body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+    <h1>Edit Code</h1>
+<textarea id="source">
+// the pass function is imported from the JavaScript host
+// it passes on the value to the next pipe
+declare function pass(data: f32): void;
+
+// a global variable to store the number of cycles
+let cycle:f32 = 0;
+
+// the process function gets called from JavaScript
+export function process(a: f32): f32 {
+  cycle++;
+
+  // only send value upstream on every third cycle
+  if (cycle == 3) {
+    pass(a);
+    cycle = 0;
+  }
+
+  return a;
+}
+
+export function _start(): void {
+  while (true) {
+    pass(20.1)
+  }
+}  
+</textarea>
+    <br>
+    <button type="button" onclick="compileCode()">Compile and load</button>
+  </body>
+</html>
