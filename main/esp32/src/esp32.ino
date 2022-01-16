@@ -16,7 +16,7 @@
 #include <ESPmDNS.h>
 #include <SPIFFS.h>
 
-#include "app.wasm.h"
+//#include "main.wasm.h"
 #include "Secret.h"
 
 //setting for rs232 (max3323)
@@ -184,6 +184,21 @@ M3Result LinkArduino(IM3Runtime runtime) {
 /*setup of the wasm module*/
 static void run_wasm(void*)
 {
+  // load wasm from SPIFFS
+  /* If default CONFIG_ARDUINO_LOOP_STACK_SIZE 8192 < wasmFile,
+  a new size must be given in  \Users\<user>\.platformio\packages\framework-arduinoespressif32\tools\sdk\include\config\sdkconfig.h
+  https://community.platformio.org/t/esp32-stack-configuration-reloaded/20994/2
+  */
+  File wasmFile = SPIFFS.open("/main.wasm", "r");
+  unsigned int build_main_wasm_len = wasmFile.size();
+  Serial.println("wasm_length:");
+  Serial.println(build_main_wasm_len);
+  // read file
+  unsigned char build_main_wasm[build_main_wasm_len];
+  wasmFile.readBytes((char *) build_main_wasm, build_main_wasm_len);
+
+  Serial.println("Loading WebAssembly was successful");
+
   M3Result result = m3Err_none;
 
 //it warks also without using variable
@@ -199,7 +214,7 @@ static void run_wasm(void*)
     runtime->memoryLimit = WASM_MEMORY_LIMIT;
 #endif
 
-   result = m3_ParseModule (env, &module, build_app_wasm, build_app_wasm_len);
+   result = m3_ParseModule (env, &module, build_main_wasm, build_main_wasm_len);
    if (result) FATAL("m3_ParseModule", result);
 
    result = m3_LoadModule (runtime, module);
@@ -437,13 +452,16 @@ void setup() {
   SWprint('i');
   SWprint(10); //carriage return*/
   
-  run_wasm(NULL);
 
   // https://randomnerdtutorials.com/esp32-web-server-spiffs-spi-flash-file-system/
-  if(!SPIFFS.begin(true)){
+  /*if(!SPIFFS.begin(true)){
   Serial.println("An Error has occurred while mounting SPIFFS");
   return;
- }
+ }*/
+
+  SPIFFS.begin();
+
+  run_wasm(NULL);
   
   setupWifi();
 
