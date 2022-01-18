@@ -502,6 +502,10 @@ void setup() {
     request->send(SPIFFS, "/ide.html");
   });
 
+  server.on("/arduino.ts", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(SPIFFS, "/arduino.ts");
+  });
+
   server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
       request->send(200);
       }, handleUpload);
